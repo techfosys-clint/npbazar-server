@@ -12,6 +12,7 @@ exports.stats = async (req, res) => {
 
     const [
         totalOrders,
+        completedOrders,
         pendingOrders,
         todayOrders,
         totalProducts,
@@ -21,13 +22,16 @@ exports.stats = async (req, res) => {
         lowStock,
         outOfStock,
         totalCustomers,
+        newCustomersToday,
         pendingReviews,
         revenueAgg,
         todayRevenueAgg,
         cartAgg,
         profitAgg,
+        ordersByCustomer,
     ] = await Promise.all([
         Order.countDocuments(),
+        Order.countDocuments(notCancelled),
         Order.countDocuments({ orderStatus: 'pending' }),
         Order.countDocuments({ createdAt: { $gte: startOfToday } }),
         Product.countDocuments(),
@@ -37,6 +41,7 @@ exports.stats = async (req, res) => {
         Product.countDocuments({ stock: { $lte: 5, $gt: 0 } }),
         Product.countDocuments({ stock: 0 }),
         User.countDocuments(),
+        User.countDocuments({ createdAt: { $gte: startOfToday } }),
         Review.countDocuments({ isApproved: false }),
         Order.aggregate([{ $match: notCancelled }, { $group: { _id: null, total: { $sum: '$total' } } }]),
         Order.aggregate([
@@ -67,7 +72,16 @@ exports.stats = async (req, res) => {
                 },
             },
         ]),
+        // Order count per registered customer (all-time, non-cancelled) — for the returning-customer rate.
+        Order.aggregate([
+            { $match: { ...notCancelled, user: { $ne: null } } },
+            { $group: { _id: '$user', count: { $sum: 1 } } },
+        ]),
     ]);
+
+    const totalRevenue = revenueAgg[0]?.total || 0;
+    const customersWithOrders = ordersByCustomer.length;
+    const returningCustomers = ordersByCustomer.filter((c) => c.count > 1).length;
 
     res.json({
         success: true,
@@ -82,13 +96,15 @@ exports.stats = async (req, res) => {
             lowStock,
             outOfStock,
             totalCustomers,
-            verifiedCustomers,
+            newCustomersToday,
             pendingReviews,
-            totalRevenue: revenueAgg[0]?.total || 0,
+            totalRevenue,
             todayRevenue: todayRevenueAgg[0]?.total || 0,
             totalProfit: profitAgg[0]?.profit || 0,
             activeCarts: cartAgg[0]?.carts || 0,
             cartItems: cartAgg[0]?.items || 0,
+            avgOrderValue: completedOrders > 0 ? Math.round(totalRevenue / completedOrders) : 0,
+            returningCustomerRate: customersWithOrders > 0 ? Math.round((returningCustomers / customersWithOrders) * 1000) / 10 : 0,
         },
     });
 };
