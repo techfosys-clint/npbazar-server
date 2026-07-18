@@ -44,6 +44,9 @@ const adminSchema = new mongoose.Schema(
             type: Boolean,
             default: true,
         },
+        // Email-based "forgot password" flow (hashed token) + expiry.
+        passwordResetToken: { type: String, select: false },
+        passwordResetExpires: { type: Date, select: false },
     },
     { timestamps: true }
 );

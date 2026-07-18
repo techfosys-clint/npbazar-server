@@ -1,8 +1,12 @@
+const crypto = require('crypto');
 const Admin = require('../models/Admin');
 const { signToken } = require('../utils/token');
 const { generatePassword } = require('../utils/generatePassword');
-const { sendAdminWelcomeEmail } = require('../utils/sendEmail');
+const { sendAdminWelcomeEmail, sendEmail } = require('../utils/sendEmail');
 const { PAGES, PAGE_KEYS, ALL_ACCESS } = require('../config/permissions');
+
+const RESET_TOKEN_VALIDITY_MS = 30 * 60 * 1000; // 30 minutes
+const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
 const publicAdmin = (admin) => ({
     id: admin._id,
@@ -90,6 +94,96 @@ exports.login = async (req, res) => {
 
         const token = signToken({ id: admin._id }, 'admin');
         return res.json({ success: true, message: 'Logged in', token, admin: publicAdmin(admin) });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+/**
+ * POST /api/admin/forgot-password
+ * Body: { email }
+ * Emails a password-reset link to the admin/staff account (valid 30 minutes).
+ */
+exports.forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ success: false, message: 'email is required' });
+
+        const admin = await Admin.findOne({ email: String(email).toLowerCase().trim() });
+        if (!admin) return res.status(404).json({ success: false, message: 'No account found with that email' });
+
+        const rawToken = crypto.randomBytes(32).toString('hex');
+        admin.passwordResetToken = hashToken(rawToken);
+        admin.passwordResetExpires = new Date(Date.now() + RESET_TOKEN_VALIDITY_MS);
+        await admin.save();
+
+        const portal = (process.env.ADMIN_PORTAL_URL || 'http://localhost:3001').replace(/\/$/, '');
+        const resetUrl = `${portal}/reset-password?token=${rawToken}&email=${encodeURIComponent(admin.email)}`;
+
+        try {
+            await sendEmail({
+                to: admin.email,
+                subject: 'Reset your admin password',
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 560px; margin: auto; color: #1f2937;">
+                        <h2 style="color: #111827;">Reset your password</h2>
+                        <p>Hi ${admin.fullName}, we received a request to reset your Ecomus Admin password. This link is valid for 30 minutes.</p>
+                        <p>
+                            <a href="${resetUrl}" style="display:inline-block; background:#111827; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none;">Reset Password</a>
+                        </p>
+                        <p style="color:#6b7280; font-size: 13px;">If you didn't request this, you can safely ignore this email — your password will stay unchanged.</p>
+                    </div>
+                `,
+                text: `Reset your admin password: ${resetUrl} (valid for 30 minutes)`,
+            });
+        } catch (mailErr) {
+            console.error('Failed to send admin password reset email:', mailErr.message);
+            return res.status(502).json({ success: false, message: 'Failed to send the reset email. Please try again later.' });
+        }
+
+        return res.json({ success: true, message: 'A password reset link has been sent to your email.' });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+/**
+ * POST /api/admin/reset-password
+ * Body: { email, token, password }
+ */
+exports.resetPassword = async (req, res) => {
+    try {
+        const { email, token, password } = req.body;
+        if (!email || !token || !password) {
+            return res.status(400).json({ success: false, message: 'email, token and new password are required' });
+        }
+        if (String(password).length < 6) {
+            return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+        }
+
+        const admin = await Admin.findOne({ email: String(email).toLowerCase().trim() }).select(
+            '+passwordResetToken +passwordResetExpires'
+        );
+        if (!admin || !admin.passwordResetToken || !admin.passwordResetExpires) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired reset link. Please request a new one.' });
+        }
+        if (admin.passwordResetExpires < new Date()) {
+            return res.status(400).json({ success: false, message: 'Reset link expired. Please request a new one.' });
+        }
+        if (hashToken(token) !== admin.passwordResetToken) {
+            return res.status(400).json({ success: false, message: 'Invalid reset link.' });
+        }
+        if (!admin.isActive) {
+            return res.status(403).json({ success: false, message: 'Account is disabled' });
+        }
+
+        admin.password = password; // pre-save hook re-hashes it
+        admin.passwordResetToken = undefined;
+        admin.passwordResetExpires = undefined;
+        await admin.save();
+
+        const jwtToken = signToken({ id: admin._id }, 'admin');
+        return res.json({ success: true, message: 'Password reset successful', token: jwtToken, admin: publicAdmin(admin) });
     } catch (err) {
         return res.status(500).json({ success: false, message: err.message });
     }

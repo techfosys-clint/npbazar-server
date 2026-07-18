@@ -8,6 +8,8 @@ router.get('/pages', ctrl.getPages);          // available pages for the registe
 router.get('/check-superadmin', ctrl.checkSuperAdmin); // check if first admin exists
 router.post('/register', ctrl.registerSuperAdmin); // first-ever admin => super admin
 router.post('/login', ctrl.login);
+router.post('/forgot-password', ctrl.forgotPassword);
+router.post('/reset-password', ctrl.resetPassword);
 
 // --- Protected (any logged-in admin) ---
 router.get('/me', adminAuth, ctrl.me);
