@@ -1,4 +1,5 @@
 const axios = require('axios');
+const Settings = require('../models/Settings');
 
 /**
  * Send an SMS through the FoxSES gateway.
@@ -30,7 +31,11 @@ const sendSms = async (recipient, message) => {
 // Send the OTP verification SMS for user phone verification.
 // `mobile` is stored locally as "01XXXXXXXXX" — the gateway needs the BD
 // country code, so prepend "88" to get "8801XXXXXXXXX" before sending.
-const sendOtpSms = (mobile, otp) =>
-    sendSms(`88${mobile}`, `Your Ecomus verification code is ${otp}. It expires in ${process.env.OTP_EXPIRES_MINUTES || 5} minutes.`);
+const sendOtpSms = async (mobile, otp) => {
+    const { storeName } = await Settings.getSingleton();
+    const minutes = process.env.OTP_EXPIRES_MINUTES || 5;
+    const message = `[${storeName}] Your verification code is: ${otp} Please do not share this code with anyone. Valid for ${minutes} minutes.`;
+    return sendSms(`88${mobile}`, message);
+};
 
 module.exports = { sendSms, sendOtpSms };

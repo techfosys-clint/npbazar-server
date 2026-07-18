@@ -15,6 +15,21 @@ const publicUser = (user) => ({
     createdAt: user.createdAt,
 });
 
+const RESEND_COOLDOWN_MS = 60 * 1000;
+
+// Throws a 429 error if this user's last OTP was sent less than
+// RESEND_COOLDOWN_MS ago. Requires `user.otp.lastSentAt` to have been
+// selected by the caller's query.
+const assertResendAllowed = (user) => {
+    const lastSentAt = user.otp?.lastSentAt;
+    if (lastSentAt && Date.now() - lastSentAt.getTime() < RESEND_COOLDOWN_MS) {
+        const waitSec = Math.ceil((RESEND_COOLDOWN_MS - (Date.now() - lastSentAt.getTime())) / 1000);
+        const err = new Error(`Please wait ${waitSec}s before requesting another code.`);
+        err.status = 429;
+        throw err;
+    }
+};
+
 // Create + persist a fresh OTP on the user document, then SMS it.
 const issueOtp = async (user) => {
     const otp = generateOtp();
@@ -22,6 +37,7 @@ const issueOtp = async (user) => {
     user.otp = {
         code: await bcrypt.hash(otp, 10),
         expiresAt: new Date(Date.now() + minutes * 60 * 1000),
+        lastSentAt: new Date(),
     };
     await user.save();
     await sendOtpSms(user.mobile, otp);
@@ -49,7 +65,7 @@ exports.register = async (req, res) => {
             if (emailTaken) return res.status(409).json({ success: false, message: 'Email already registered' });
         }
 
-        const existing = await User.findOne({ mobile });
+        const existing = await User.findOne({ mobile }).select('+otp.lastSentAt');
         if (existing) {
             if (existing.isPhoneVerified) {
                 return res.status(409).json({ success: false, message: 'Mobile number already registered' });
@@ -61,9 +77,10 @@ exports.register = async (req, res) => {
             if (address) existing.address = address;
             await existing.save();
             try {
+                assertResendAllowed(existing);
                 await issueOtp(existing);
             } catch (smsErr) {
-                return res.status(502).json({ success: false, message: smsErr.message });
+                return res.status(smsErr.status || 502).json({ success: false, message: smsErr.message });
             }
             return res.status(200).json({
                 success: true,
@@ -140,16 +157,17 @@ exports.resendOtp = async (req, res) => {
         const { mobile } = req.body;
         if (!mobile) return res.status(400).json({ success: false, message: 'mobile is required' });
 
-        const user = await User.findOne({ mobile: normalizeMobile(mobile) });
+        const user = await User.findOne({ mobile: normalizeMobile(mobile) }).select('+otp.lastSentAt');
         if (!user) return res.status(404).json({ success: false, message: 'User not found' });
         if (user.isPhoneVerified) {
             return res.status(400).json({ success: false, message: 'Phone already verified' });
         }
 
+        assertResendAllowed(user);
         await issueOtp(user);
         return res.json({ success: true, message: 'A new OTP has been sent to your mobile number.' });
     } catch (err) {
-        return res.status(500).json({ success: false, message: err.message });
+        return res.status(err.status || 500).json({ success: false, message: err.message });
     }
 };
 
@@ -193,13 +211,14 @@ exports.forgotPassword = async (req, res) => {
         const { mobile } = req.body;
         if (!mobile) return res.status(400).json({ success: false, message: 'mobile number is required' });
 
-        const user = await User.findOne({ mobile: normalizeMobile(mobile) });
+        const user = await User.findOne({ mobile: normalizeMobile(mobile) }).select('+otp.lastSentAt');
         if (!user) return res.status(404).json({ success: false, message: 'No account found with that mobile number' });
 
         try {
+            assertResendAllowed(user);
             await issueOtp(user);
         } catch (smsErr) {
-            return res.status(502).json({ success: false, message: smsErr.message });
+            return res.status(smsErr.status || 502).json({ success: false, message: smsErr.message });
         }
         return res.json({ success: true, message: 'An OTP has been sent to your mobile number.' });
     } catch (err) {

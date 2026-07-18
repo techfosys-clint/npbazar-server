@@ -5,6 +5,7 @@ const settingsSchema = new mongoose.Schema(
     {
         storeName: { type: String, default: 'Ecomus' },
         logo: { type: String, default: '' },
+        favicon: { type: String, default: '' },
         email: { type: String, default: '' },
         phone: { type: String, default: '' },
         address: { type: String, default: '' },
