@@ -9,8 +9,6 @@ const { evaluateCoupon } = require('../utils/discount');
 const { generateInvoicePdf, invoiceEmailHtml } = require('../utils/invoice');
 const { sendEmail } = require('../utils/sendEmail');
 const Settings = require('../models/Settings');
-const { normalizeMobile } = require('../utils/mobile');
-const { isPhoneVerifiedWithToken } = require('./phoneVerificationController');
 const { initiatePaymentForOrder, assertGatewayAvailable } = require('./paymentController');
 const { restoreStockAndCoupon } = require('../services/paymentStatusService');
 
@@ -39,25 +37,12 @@ const sendOrderConfirmationEmail = async (order, to) => {
  */
 exports.create = async (req, res) => {
     try {
-        const { shippingAddress, couponCode, paymentMethod = 'cod', paymentGateway, phoneVerificationToken } = req.body;
+        const { shippingAddress, couponCode, paymentMethod = 'cod', paymentGateway } = req.body;
         if (!shippingAddress || !shippingAddress.fullName || !shippingAddress.phone || !shippingAddress.addressLine) {
             return res.status(400).json({ success: false, message: 'A valid shippingAddress is required' });
         }
         if (paymentMethod === 'online') {
             await assertGatewayAvailable(paymentGateway); // throws a clear message if unset/inactive/misconfigured
-        }
-
-        // Checkout phone must be verified — skip only if it's the account's
-        // own already-verified number; a different number always needs a
-        // fresh OTP verification, same as guest checkout.
-        const checkoutPhone = normalizeMobile(shippingAddress.phone);
-        const isOwnVerifiedNumber = req.user.isPhoneVerified && checkoutPhone === normalizeMobile(req.user.mobile);
-        if (!isOwnVerifiedNumber && !(await isPhoneVerifiedWithToken(checkoutPhone, phoneVerificationToken))) {
-            return res.status(403).json({
-                success: false,
-                message: 'Please verify this phone number before placing the order.',
-                requiresPhoneVerification: true,
-            });
         }
 
         const cart = await Cart.findOne({ user: req.user._id }).populate('items.product');
@@ -170,7 +155,7 @@ exports.create = async (req, res) => {
  */
 exports.guestCreate = async (req, res) => {
     try {
-        const { items: reqItems, shippingAddress, paymentMethod = 'cod', paymentGateway, couponCode, phoneVerificationToken } = req.body;
+        const { items: reqItems, shippingAddress, paymentMethod = 'cod', paymentGateway, couponCode } = req.body;
         if (!Array.isArray(reqItems) || reqItems.length === 0) {
             return res.status(400).json({ success: false, message: 'At least one item is required' });
         }
@@ -179,17 +164,6 @@ exports.guestCreate = async (req, res) => {
         }
         if (paymentMethod === 'online') {
             await assertGatewayAvailable(paymentGateway);
-        }
-
-        // Guests always need a freshly OTP-verified phone — there's no
-        // account to trust the number against.
-        const checkoutPhone = normalizeMobile(shippingAddress.phone);
-        if (!(await isPhoneVerifiedWithToken(checkoutPhone, phoneVerificationToken))) {
-            return res.status(403).json({
-                success: false,
-                message: 'Please verify this phone number before placing the order.',
-                requiresPhoneVerification: true,
-            });
         }
 
         const items = [];

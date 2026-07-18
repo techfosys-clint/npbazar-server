@@ -21,7 +21,6 @@ exports.stats = async (req, res) => {
         lowStock,
         outOfStock,
         totalCustomers,
-        verifiedCustomers,
         pendingReviews,
         revenueAgg,
         todayRevenueAgg,
@@ -38,7 +37,6 @@ exports.stats = async (req, res) => {
         Product.countDocuments({ stock: { $lte: 5, $gt: 0 } }),
         Product.countDocuments({ stock: 0 }),
         User.countDocuments(),
-        User.countDocuments({ isPhoneVerified: true }),
         Review.countDocuments({ isApproved: false }),
         Order.aggregate([{ $match: notCancelled }, { $group: { _id: null, total: { $sum: '$total' } } }]),
         Order.aggregate([

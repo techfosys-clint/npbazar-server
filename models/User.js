@@ -33,16 +33,9 @@ const userSchema = new mongoose.Schema(
             required: [true, 'Password is required'],
             select: false,
         },
-        isPhoneVerified: {
-            type: Boolean,
-            default: false,
-        },
-        // OTP for phone verification (hashed) + expiry.
-        otp: {
-            code: { type: String, select: false },
-            expiresAt: { type: Date, select: false },
-            lastSentAt: { type: Date, select: false },
-        },
+        // Email-based "forgot password" flow (hashed token) + expiry.
+        passwordResetToken: { type: String, select: false },
+        passwordResetExpires: { type: Date, select: false },
     },
     { timestamps: true }
 );

@@ -43,7 +43,7 @@ exports.exportCsv = async (req, res) => {
     ]);
     const statsByUser = new Map(orderStats.map((s) => [String(s._id), s]));
 
-    const header = ['Name', 'Mobile', 'Email', 'Address', 'Phone Verified', 'Orders', 'Total Spent', 'Joined'];
+    const header = ['Name', 'Mobile', 'Email', 'Address', 'Orders', 'Total Spent', 'Joined'];
     const rows = customers.map((c) => {
         const stats = statsByUser.get(String(c._id));
         return [
@@ -51,7 +51,6 @@ exports.exportCsv = async (req, res) => {
             c.mobile || '',
             c.email || '',
             c.address || '',
-            c.isPhoneVerified ? 'Yes' : 'No',
             stats?.orderCount || 0,
             stats?.totalSpent || 0,
             c.createdAt.toISOString().slice(0, 10),

@@ -26,7 +26,6 @@ const wishlistRoutes = require('./routes/wishlistRoutes');
 const addressRoutes = require('./routes/addressRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const couponRoutes = require('./routes/couponRoutes');
-const phoneVerificationRoutes = require('./routes/phoneVerificationRoutes');
 
 // Uploads (image files)
 const uploadRoutes = require('./routes/uploadRoutes');
@@ -70,7 +69,7 @@ app.get('/', (req, res) => {
 // API Routes
 // --- Auth ---
 app.use('/api/admin', adminRoutes); // admin panel: super admin, admin & staff
-app.use('/api/user', userRoutes);   // storefront users (phone + OTP)
+app.use('/api/user', userRoutes);   // storefront users (mobile + password, email-based password reset)
 
 // --- Catalog (public reads + admin writes) ---
 app.use('/api/brands', brandRoutes);
@@ -89,7 +88,6 @@ app.use('/api/cart', cartRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/addresses', addressRoutes);
 app.use('/api/orders', orderRoutes);
-app.use('/api/phone-verification', phoneVerificationRoutes); // public — guest checkout has no account yet
 
 // --- Uploads ---
 app.use('/api/upload', uploadRoutes);

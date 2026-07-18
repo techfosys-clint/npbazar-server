@@ -1,8 +1,7 @@
-const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const User = require('../models/User');
 const { signToken } = require('../utils/token');
-const { generateOtp } = require('../utils/generatePassword');
-const { sendOtpSms } = require('../utils/sendSms');
+const { sendEmail } = require('../utils/sendEmail');
 const { normalizeMobile, isValidMobile } = require('../utils/mobile');
 
 const publicUser = (user) => ({
@@ -11,163 +10,43 @@ const publicUser = (user) => ({
     mobile: user.mobile,
     email: user.email,
     address: user.address,
-    isPhoneVerified: user.isPhoneVerified,
     createdAt: user.createdAt,
 });
 
-const RESEND_COOLDOWN_MS = 60 * 1000;
-
-// Throws a 429 error if this user's last OTP was sent less than
-// RESEND_COOLDOWN_MS ago. Requires `user.otp.lastSentAt` to have been
-// selected by the caller's query.
-const assertResendAllowed = (user) => {
-    const lastSentAt = user.otp?.lastSentAt;
-    if (lastSentAt && Date.now() - lastSentAt.getTime() < RESEND_COOLDOWN_MS) {
-        const waitSec = Math.ceil((RESEND_COOLDOWN_MS - (Date.now() - lastSentAt.getTime())) / 1000);
-        const err = new Error(`Please wait ${waitSec}s before requesting another code.`);
-        err.status = 429;
-        throw err;
-    }
-};
-
-// Create + persist a fresh OTP on the user document, then SMS it.
-const issueOtp = async (user) => {
-    const otp = generateOtp();
-    const minutes = Number(process.env.OTP_EXPIRES_MINUTES) || 5;
-    user.otp = {
-        code: await bcrypt.hash(otp, 10),
-        expiresAt: new Date(Date.now() + minutes * 60 * 1000),
-        lastSentAt: new Date(),
-    };
-    await user.save();
-    await sendOtpSms(user.mobile, otp);
-};
+const RESET_TOKEN_VALIDITY_MS = 30 * 60 * 1000; // 30 minutes
+const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
 /**
  * POST /api/user/register
- * Body: { name, mobile, password, email?, address? } — mobile is required and
- * must be a valid BD number. The account stays unverified and an OTP is sent;
- * verify-otp is required before the user can log in.
+ * Body: { name, mobile, email, password, address? }
+ * Accounts are active immediately — no phone/OTP verification step. Email
+ * is required so the account can always recover its password later.
  */
 exports.register = async (req, res) => {
     try {
         let { name, mobile, email, password, address = '' } = req.body;
-        if (!name || !password || !mobile) {
-            return res.status(400).json({ success: false, message: 'name, mobile number and password are required' });
+        if (!name || !mobile || !email || !password) {
+            return res.status(400).json({ success: false, message: 'name, mobile number, email and password are required' });
         }
         mobile = normalizeMobile(mobile);
         if (!isValidMobile(mobile)) {
             return res.status(400).json({ success: false, message: 'Enter a valid Bangladeshi mobile number' });
         }
+        email = String(email).toLowerCase().trim();
 
-        if (email) {
-            const emailTaken = await User.findOne({ email: String(email).toLowerCase() });
-            if (emailTaken) return res.status(409).json({ success: false, message: 'Email already registered' });
-        }
-
-        const existing = await User.findOne({ mobile }).select('+otp.lastSentAt');
+        const existing = await User.findOne({ $or: [{ mobile }, { email }] });
         if (existing) {
-            if (existing.isPhoneVerified) {
-                return res.status(409).json({ success: false, message: 'Mobile number already registered' });
-            }
-            // Unverified re-registration: refresh details and resend the OTP.
-            existing.name = name;
-            if (email) existing.email = email;
-            existing.password = password;
-            if (address) existing.address = address;
-            await existing.save();
-            try {
-                assertResendAllowed(existing);
-                await issueOtp(existing);
-            } catch (smsErr) {
-                return res.status(smsErr.status || 502).json({ success: false, message: smsErr.message });
-            }
-            return res.status(200).json({
-                success: true,
-                message: 'Account exists but is unverified. A new OTP has been sent.',
-                userId: existing._id,
-            });
+            return res.status(409).json({ success: false, message: 'Mobile number or email already registered' });
         }
 
         const user = await User.create({ name, mobile, email, password, address });
-        try {
-            await issueOtp(user);
-        } catch (smsErr) {
-            // Don't strand an unverifiable account if the SMS never went out.
-            await User.deleteOne({ _id: user._id });
-            return res.status(502).json({ success: false, message: smsErr.message });
-        }
-
-        return res.status(201).json({
-            success: true,
-            message: 'Registered. An OTP has been sent to your mobile number for verification.',
-            userId: user._id,
-        });
+        const token = signToken({ id: user._id }, 'user');
+        return res.status(201).json({ success: true, message: 'Registered', token, user: publicUser(user) });
     } catch (err) {
         if (err.code === 11000) {
             return res.status(409).json({ success: false, message: 'Mobile number or email already registered' });
         }
         return res.status(500).json({ success: false, message: err.message });
-    }
-};
-
-/**
- * POST /api/user/verify-otp
- * Body: { mobile, otp }
- */
-exports.verifyOtp = async (req, res) => {
-    try {
-        const { mobile, otp } = req.body;
-        if (!mobile || !otp) {
-            return res.status(400).json({ success: false, message: 'mobile and otp are required' });
-        }
-
-        const user = await User.findOne({ mobile: normalizeMobile(mobile) }).select('+otp.code +otp.expiresAt');
-        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-        if (user.isPhoneVerified) {
-            return res.status(400).json({ success: false, message: 'Phone already verified' });
-        }
-        if (!user.otp?.code || !user.otp?.expiresAt) {
-            return res.status(400).json({ success: false, message: 'No OTP pending. Please request a new one.' });
-        }
-        if (user.otp.expiresAt < new Date()) {
-            return res.status(400).json({ success: false, message: 'OTP expired. Please request a new one.' });
-        }
-        if (!(await bcrypt.compare(String(otp), user.otp.code))) {
-            return res.status(400).json({ success: false, message: 'Invalid OTP' });
-        }
-
-        user.isPhoneVerified = true;
-        user.otp = undefined;
-        await user.save();
-
-        const token = signToken({ id: user._id }, 'user');
-        return res.json({ success: true, message: 'Phone verified', token, user: publicUser(user) });
-    } catch (err) {
-        return res.status(500).json({ success: false, message: err.message });
-    }
-};
-
-/**
- * POST /api/user/resend-otp
- * Body: { mobile }
- */
-exports.resendOtp = async (req, res) => {
-    try {
-        const { mobile } = req.body;
-        if (!mobile) return res.status(400).json({ success: false, message: 'mobile is required' });
-
-        const user = await User.findOne({ mobile: normalizeMobile(mobile) }).select('+otp.lastSentAt');
-        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-        if (user.isPhoneVerified) {
-            return res.status(400).json({ success: false, message: 'Phone already verified' });
-        }
-
-        assertResendAllowed(user);
-        await issueOtp(user);
-        return res.json({ success: true, message: 'A new OTP has been sent to your mobile number.' });
-    } catch (err) {
-        return res.status(err.status || 500).json({ success: false, message: err.message });
     }
 };
 
@@ -186,13 +65,6 @@ exports.login = async (req, res) => {
         if (!user || !(await user.comparePassword(password))) {
             return res.status(401).json({ success: false, message: 'Invalid mobile number or password' });
         }
-        if (!user.isPhoneVerified) {
-            return res.status(403).json({
-                success: false,
-                message: 'Phone number not verified. Please verify with the OTP first.',
-                requiresVerification: true,
-            });
-        }
 
         const token = signToken({ id: user._id }, 'user');
         return res.json({ success: true, message: 'Logged in', token, user: publicUser(user) });
@@ -203,24 +75,48 @@ exports.login = async (req, res) => {
 
 /**
  * POST /api/user/forgot-password
- * Body: { mobile }
- * Sends an OTP (reusing the same OTP field as registration) that reset-password verifies.
+ * Body: { email }
+ * Emails a password-reset link (the raw token lives only in the email —
+ * the DB stores a hash of it, same pattern as a session token).
  */
 exports.forgotPassword = async (req, res) => {
     try {
-        const { mobile } = req.body;
-        if (!mobile) return res.status(400).json({ success: false, message: 'mobile number is required' });
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ success: false, message: 'email is required' });
 
-        const user = await User.findOne({ mobile: normalizeMobile(mobile) }).select('+otp.lastSentAt');
-        if (!user) return res.status(404).json({ success: false, message: 'No account found with that mobile number' });
+        const user = await User.findOne({ email: String(email).toLowerCase().trim() });
+        if (!user) return res.status(404).json({ success: false, message: 'No account found with that email' });
+
+        const rawToken = crypto.randomBytes(32).toString('hex');
+        user.passwordResetToken = hashToken(rawToken);
+        user.passwordResetExpires = new Date(Date.now() + RESET_TOKEN_VALIDITY_MS);
+        await user.save();
+
+        const base = (process.env.STOREFRONT_URL || 'http://localhost:3000').replace(/\/$/, '');
+        const resetUrl = `${base}/reset-password?token=${rawToken}&email=${encodeURIComponent(user.email)}`;
 
         try {
-            assertResendAllowed(user);
-            await issueOtp(user);
-        } catch (smsErr) {
-            return res.status(smsErr.status || 502).json({ success: false, message: smsErr.message });
+            await sendEmail({
+                to: user.email,
+                subject: 'Reset your password',
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 560px; margin: auto; color: #1f2937;">
+                        <h2 style="color: #111827;">Reset your password</h2>
+                        <p>Hi ${user.name}, we received a request to reset your password. This link is valid for 30 minutes.</p>
+                        <p>
+                            <a href="${resetUrl}" style="display:inline-block; background:#111827; color:#fff; padding:10px 20px; border-radius:6px; text-decoration:none;">Reset Password</a>
+                        </p>
+                        <p style="color:#6b7280; font-size: 13px;">If you didn't request this, you can safely ignore this email — your password will stay unchanged.</p>
+                    </div>
+                `,
+                text: `Reset your password: ${resetUrl} (valid for 30 minutes)`,
+            });
+        } catch (mailErr) {
+            console.error('Failed to send password reset email:', mailErr.message);
+            return res.status(502).json({ success: false, message: 'Failed to send the reset email. Please try again later.' });
         }
-        return res.json({ success: true, message: 'An OTP has been sent to your mobile number.' });
+
+        return res.json({ success: true, message: 'A password reset link has been sent to your email.' });
     } catch (err) {
         return res.status(500).json({ success: false, message: err.message });
     }
@@ -228,39 +124,40 @@ exports.forgotPassword = async (req, res) => {
 
 /**
  * POST /api/user/reset-password
- * Body: { mobile, otp, password }
- * Verifying the OTP here also marks the phone verified, so a forgotten
- * password can't leave an account stuck unverified.
+ * Body: { email, token, password }
+ * `token` is the raw value from the emailed link — compared against the
+ * hash stored by forgotPassword.
  */
 exports.resetPassword = async (req, res) => {
     try {
-        const { mobile, otp, password } = req.body;
-        if (!mobile || !otp || !password) {
-            return res.status(400).json({ success: false, message: 'mobile, otp and new password are required' });
+        const { email, token, password } = req.body;
+        if (!email || !token || !password) {
+            return res.status(400).json({ success: false, message: 'email, token and new password are required' });
         }
         if (String(password).length < 6) {
             return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
         }
 
-        const user = await User.findOne({ mobile: normalizeMobile(mobile) }).select('+otp.code +otp.expiresAt');
-        if (!user) return res.status(404).json({ success: false, message: 'No account found with that mobile number' });
-        if (!user.otp?.code || !user.otp?.expiresAt) {
-            return res.status(400).json({ success: false, message: 'No OTP pending. Please request a new one.' });
+        const user = await User.findOne({ email: String(email).toLowerCase().trim() }).select(
+            '+passwordResetToken +passwordResetExpires'
+        );
+        if (!user || !user.passwordResetToken || !user.passwordResetExpires) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired reset link. Please request a new one.' });
         }
-        if (user.otp.expiresAt < new Date()) {
-            return res.status(400).json({ success: false, message: 'OTP expired. Please request a new one.' });
+        if (user.passwordResetExpires < new Date()) {
+            return res.status(400).json({ success: false, message: 'Reset link expired. Please request a new one.' });
         }
-        if (!(await bcrypt.compare(String(otp), user.otp.code))) {
-            return res.status(400).json({ success: false, message: 'Invalid OTP' });
+        if (hashToken(token) !== user.passwordResetToken) {
+            return res.status(400).json({ success: false, message: 'Invalid reset link.' });
         }
 
         user.password = password; // pre-save hook re-hashes it
-        user.otp = undefined;
-        user.isPhoneVerified = true;
+        user.passwordResetToken = undefined;
+        user.passwordResetExpires = undefined;
         await user.save();
 
-        const token = signToken({ id: user._id }, 'user');
-        return res.json({ success: true, message: 'Password reset successful', token, user: publicUser(user) });
+        const jwtToken = signToken({ id: user._id }, 'user');
+        return res.json({ success: true, message: 'Password reset successful', token: jwtToken, user: publicUser(user) });
     } catch (err) {
         return res.status(500).json({ success: false, message: err.message });
     }
