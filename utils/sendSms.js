@@ -34,7 +34,7 @@ const sendSms = async (recipient, message) => {
 const sendOtpSms = async (mobile, otp) => {
     const { storeName } = await Settings.getSingleton();
     const minutes = process.env.OTP_EXPIRES_MINUTES || 5;
-    const message = `[${storeName}] Your verification code is: ${otp} Please do not share this code with anyone. Valid for ${minutes} minutes.`;
+    const message = `[ ${storeName} ] Your verification code is: ${otp} Please do not share this code with anyone. Valid for ${minutes} minutes.`;
     return sendSms(`88${mobile}`, message);
 };
 
