@@ -263,6 +263,36 @@ exports.me = (req, res) => {
     res.json({ success: true, admin: publicAdmin(req.admin) });
 };
 
+/**
+ * PATCH /api/admin/me
+ * Any logged-in admin/staff updates their own name and/or password
+ * (email, role, permissions stay locked to the staff-management flow).
+ * Body: { fullName?, currentPassword?, newPassword? }
+ */
+exports.updateMyProfile = async (req, res) => {
+    try {
+        const { fullName, currentPassword, newPassword } = req.body;
+        const admin = await Admin.findById(req.admin._id).select('+password');
+
+        if (newPassword) {
+            if (!currentPassword || !(await admin.comparePassword(currentPassword))) {
+                return res.status(401).json({ success: false, message: 'Current password is incorrect' });
+            }
+            if (String(newPassword).length < 6) {
+                return res.status(400).json({ success: false, message: 'New password must be at least 6 characters' });
+            }
+            admin.password = newPassword;
+        }
+
+        if (fullName) admin.fullName = fullName;
+
+        await admin.save();
+        res.json({ success: true, message: 'Profile updated', admin: publicAdmin(admin) });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
 // GET /api/admin  (protected: staff-page access) -> list all admins/staff
 exports.listAdmins = async (req, res) => {
     const admins = await Admin.find().sort({ createdAt: -1 });

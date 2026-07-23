@@ -13,6 +13,7 @@ router.post('/reset-password', ctrl.resetPassword);
 
 // --- Protected (any logged-in admin) ---
 router.get('/me', adminAuth, ctrl.me);
+router.patch('/me', adminAuth, ctrl.updateMyProfile);
 
 // --- Protected (needs access to the "staff" page) ---
 router.post('/create', adminAuth, requirePage('staff'), ctrl.createAdminOrStaff);
