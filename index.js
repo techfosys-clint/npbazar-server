@@ -50,6 +50,11 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Behind Coolify's Traefik reverse proxy, which terminates HTTPS and forwards
+// plain HTTP — without this, req.protocol always reports 'http', so URLs built
+// from it (e.g. uploaded file URLs) end up http:// even though the site is https.
+app.set('trust proxy', 1);
+
 // Connect to MongoDB
 connectDB();
 
