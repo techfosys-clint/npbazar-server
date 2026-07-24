@@ -113,4 +113,10 @@ const orderSchema = new mongoose.Schema(
     { timestamps: true }
 );
 
+// Every analytics aggregation ($match on a date range + orderStatus, or by
+// user) was doing a full collection scan without these — the more orders
+// pile up, the slower the Analytics dashboard gets.
+orderSchema.index({ createdAt: 1, orderStatus: 1 });
+orderSchema.index({ user: 1 });
+
 module.exports = mongoose.model('Order', orderSchema);
