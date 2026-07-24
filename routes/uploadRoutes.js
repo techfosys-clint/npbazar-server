@@ -9,7 +9,11 @@ const { adminAuth } = require('../middleware/adminAuth');
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const ALLOWED = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'];
+const ALLOWED = [
+    'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif',
+    // .ico favicon uploads — browsers/OSes report these inconsistently.
+    'image/x-icon', 'image/vnd.microsoft.icon', 'image/ico', 'image/icon',
+];
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOAD_DIR),
@@ -23,8 +27,10 @@ const upload = multer({
     storage,
     limits: { fileSize: 5 * 1024 * 1024, files: 6 }, // 5MB per file, up to 6 files per request
     fileFilter: (req, file, cb) => {
-        if (ALLOWED.includes(file.mimetype)) cb(null, true);
-        else cb(new Error('Only image files are allowed (jpeg, png, webp, gif, avif)'));
+        // Some browsers/OSes report .ico as a generic binary mimetype — fall back to the extension for those.
+        const isIcoByExt = path.extname(file.originalname).toLowerCase() === '.ico';
+        if (ALLOWED.includes(file.mimetype) || isIcoByExt) cb(null, true);
+        else cb(new Error('Only image files are allowed (jpeg, png, webp, gif, avif, ico)'));
     },
 });
 
