@@ -38,6 +38,23 @@ const settingsSchema = new mongoose.Schema(
         contactUs: { type: String, default: '' },
         privacyPolicy: { type: String, default: '' },
         refundPolicy: { type: String, default: '' },
+
+        // Site-wide SEO + social share defaults, and per-static-page overrides.
+        // Read by the storefront's generateMetadata (root layout + static pages);
+        // products/collections/blog posts already carry their own seoTitle/seoDescription.
+        seo: {
+            metaTitle: { type: String, default: '' },
+            metaDescription: { type: String, default: '' },
+            // Social share (Open Graph/Twitter card) image — falls back to `logo` when empty.
+            ogImage: { type: String, default: '' },
+            pages: {
+                home: { title: { type: String, default: '' }, description: { type: String, default: '' } },
+                about: { title: { type: String, default: '' }, description: { type: String, default: '' } },
+                contact: { title: { type: String, default: '' }, description: { type: String, default: '' } },
+                privacyPolicy: { title: { type: String, default: '' }, description: { type: String, default: '' } },
+                refundPolicy: { title: { type: String, default: '' }, description: { type: String, default: '' } },
+            },
+        },
     },
     { timestamps: true }
 );
