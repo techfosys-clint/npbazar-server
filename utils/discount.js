@@ -77,20 +77,32 @@ const evaluateCoupon = async (coupon, items, subtotal) => {
         const buyCollectionIds = await resolveCollectionProductIds(coupon.collectionIds);
         const buyPool = filterEligibleItems(items, coupon.appliesTo, productIdSet, buyCollectionIds);
         const buyQtyTotal = buyPool.reduce((s, i) => s + i.quantity, 0);
-        const sets = Math.floor(buyQtyTotal / coupon.buyQuantity);
-        if (sets <= 0) {
-            throw new Error(`Add ${coupon.buyQuantity} qualifying item(s) to your cart to unlock this offer`);
-        }
 
         // "Get" pool defaults to the same eligible products as "buy" when not set separately.
         const hasGetTargets = (coupon.getProductIds || []).length > 0 || (coupon.getCollectionIds || []).length > 0;
-        let getPool = buyPool;
+
+        let sets, getPool;
         if (hasGetTargets) {
+            // Separate pools: the "buy" requirement is independent of the "get" pool,
+            // so every qualifying unit in the buy pool counts toward a set.
+            sets = Math.floor(buyQtyTotal / coupon.buyQuantity);
             const getProductIdSet = new Set((coupon.getProductIds || []).map(String));
             const getCollectionProductIdSet = await resolveCollectionProductIds(coupon.getCollectionIds);
             getPool = items.filter(
                 (i) => getProductIdSet.has(String(i.productId)) || getCollectionProductIdSet.has(String(i.productId))
             );
+        } else {
+            // Same pool on both sides — each set needs buyQuantity PAID units plus
+            // getQuantity FREE/discounted units, so a single unit can't discount itself
+            // (previously "buy 1 get 1" on one pool would give that lone unit away free).
+            const setSize = coupon.buyQuantity + coupon.getQuantity;
+            sets = Math.floor(buyQtyTotal / setSize);
+            getPool = buyPool;
+        }
+
+        if (sets <= 0) {
+            const needed = hasGetTargets ? coupon.buyQuantity : coupon.buyQuantity + coupon.getQuantity;
+            throw new Error(`Add ${needed} qualifying item(s) to your cart to unlock this offer`);
         }
 
         // Flatten to individual units, cheapest first, so the discount favors the customer.
