@@ -1,6 +1,7 @@
 const Product = require('../models/Product');
 const InventoryLog = require('../models/InventoryLog');
 const Order = require('../models/Order');
+const { emitToAdmins } = require('../utils/realtime');
 
 /**
  * GET /api/inventory  (admin, perm: inventory)
@@ -92,6 +93,7 @@ exports.stockIn = async (req, res) => {
             admin: req.admin._id,
         });
 
+        emitToAdmins(req, 'stock:updated', { productIds: [String(product._id)] });
         res.status(201).json({
             success: true,
             message: `Added ${qty} units. New stock: ${product.stock}, avg cost: ৳${product.costPrice}`,
@@ -136,6 +138,7 @@ exports.adjust = async (req, res) => {
             admin: req.admin._id,
         });
 
+        emitToAdmins(req, 'stock:updated', { productIds: [String(product._id)] });
         res.status(201).json({
             success: true,
             message: `Stock adjusted by ${qty > 0 ? '+' : ''}${qty}. New stock: ${product.stock}`,

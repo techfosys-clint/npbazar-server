@@ -1,6 +1,7 @@
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const { getEffectivePrice } = require('../utils/pricing');
+const { emitToAdmins } = require('../utils/realtime');
 
 // Load the user's cart, populate products, and compute a live total from current
 // prices (honoring per-variant prices when the selected option defines one).
@@ -63,6 +64,7 @@ exports.addItem = async (req, res) => {
             cart.items.push({ product: productId, quantity: Number(quantity), variant });
         }
         await cart.save();
+        emitToAdmins(req, 'cart:updated', { userId: String(req.user._id) });
 
         const result = await buildCartResponse(req.user._id);
         res.status(201).json({ success: true, cart: result });
@@ -90,6 +92,7 @@ exports.updateItem = async (req, res) => {
             item.quantity = Number(quantity);
         }
         await cart.save();
+        emitToAdmins(req, 'cart:updated', { userId: String(req.user._id) });
 
         const result = await buildCartResponse(req.user._id);
         res.json({ success: true, cart: result });
@@ -104,6 +107,7 @@ exports.removeItem = async (req, res) => {
     if (!cart) return res.status(404).json({ success: false, message: 'Cart not found' });
     cart.items = cart.items.filter((i) => i.product.toString() !== req.params.productId);
     await cart.save();
+    emitToAdmins(req, 'cart:updated', { userId: String(req.user._id) });
     const result = await buildCartResponse(req.user._id);
     res.json({ success: true, cart: result });
 };
@@ -111,6 +115,7 @@ exports.removeItem = async (req, res) => {
 // DELETE /api/cart
 exports.clearCart = async (req, res) => {
     await Cart.findOneAndUpdate({ user: req.user._id }, { items: [] });
+    emitToAdmins(req, 'cart:updated', { userId: String(req.user._id) });
     res.json({ success: true, cart: { items: [], subtotal: 0, count: 0 } });
 };
 

@@ -11,6 +11,7 @@ const { sendEmail } = require('../utils/sendEmail');
 const Settings = require('../models/Settings');
 const { initiatePaymentForOrder, assertGatewayAvailable } = require('./paymentController');
 const { restoreStockAndCoupon } = require('../services/paymentStatusService');
+const { emitToAdmins } = require('../utils/realtime');
 
 const genOrderNumber = () =>
     'ORD-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase();
@@ -167,6 +168,8 @@ exports.create = async (req, res) => {
         if (appliedCoupon) await Coupon.updateOne({ _id: appliedCoupon._id }, { $inc: { usedCount: 1 } });
         cart.items = [];
         await cart.save();
+        emitToAdmins(req, 'stock:updated', { productIds: items.map((i) => String(i.product)) });
+        emitToAdmins(req, 'cart:updated', { userId: String(req.user._id) });
 
         let paymentRedirectUrl = null;
         if (paymentMethod === 'online') {
@@ -279,6 +282,7 @@ exports.guestCreate = async (req, res) => {
             })
         );
         if (appliedCoupon) await Coupon.updateOne({ _id: appliedCoupon._id }, { $inc: { usedCount: 1 } });
+        emitToAdmins(req, 'stock:updated', { productIds: items.map((i) => String(i.product)) });
 
         let paymentRedirectUrl = null;
         if (paymentMethod === 'online') {
@@ -546,6 +550,7 @@ exports.adminUpdateStatus = async (req, res) => {
         if (paymentStatus) order.paymentStatus = paymentStatus;
 
         await order.save();
+        emitToAdmins(req, 'order:updated', { orderId: String(order._id) });
         res.json({ success: true, message: 'Order updated', order });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
