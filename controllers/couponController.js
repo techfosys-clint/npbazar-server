@@ -82,7 +82,7 @@ exports.validate = async (req, res) => {
         });
         const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
 
-        const { discount, freeShipping, freeGift } = await evaluateCoupon(coupon, items, subtotal);
+        const { discount, freeShipping, freeGift, discountedLines } = await evaluateCoupon(coupon, items, subtotal);
 
         let freeGiftInfo = null;
         if (freeGift) {
@@ -98,6 +98,9 @@ exports.validate = async (req, res) => {
             discount,
             freeShipping,
             freeGift: freeGiftInfo,
+            // Which already-in-cart product(s) the BOGO discount landed on, so the
+            // storefront can show "Free" directly on that line instead of only a lump sum.
+            discountedLines: (discountedLines || []).map((l) => ({ productId: l.productId, quantity: l.quantity, free: l.free })),
             total: subtotal - discount,
         });
     } catch (err) {

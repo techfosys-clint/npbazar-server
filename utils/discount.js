@@ -116,18 +116,34 @@ const evaluateCoupon = async (coupon, items, subtotal) => {
             };
         }
 
-        // Flatten to individual units, cheapest first, so the discount favors the customer.
-        const units = [];
+        // Flatten to individual units (keeping which product each came from),
+        // cheapest first, so the discount favors the customer.
+        const unitEntries = [];
         getPool.forEach((i) => {
-            for (let k = 0; k < i.quantity; k++) units.push(i.price);
+            for (let k = 0; k < i.quantity; k++) unitEntries.push({ productId: i.productId, price: i.price });
         });
-        units.sort((a, b) => a - b);
+        unitEntries.sort((a, b) => a.price - b.price);
 
-        const unitsToDiscount = Math.min(sets * coupon.getQuantity, units.length);
+        const unitsToDiscount = Math.min(sets * coupon.getQuantity, unitEntries.length);
         const discountRate = coupon.getDiscountType === 'free' ? 1 : coupon.getDiscountValue / 100;
-        const discount = units.slice(0, unitsToDiscount).reduce((s, price) => s + price * discountRate, 0);
+        const discountedEntries = unitEntries.slice(0, unitsToDiscount);
+        const discount = discountedEntries.reduce((s, e) => s + e.price * discountRate, 0);
 
-        return { discount: Math.min(discount, subtotal), freeShipping: false };
+        // Group by product so the storefront can show "Free"/a reduced price
+        // directly on that cart line, instead of only a lump-sum discount.
+        const discountedLinesMap = new Map();
+        discountedEntries.forEach((e) => {
+            const key = String(e.productId);
+            const existing = discountedLinesMap.get(key) || { productId: e.productId, quantity: 0, free: discountRate >= 1 };
+            existing.quantity += 1;
+            discountedLinesMap.set(key, existing);
+        });
+
+        return {
+            discount: Math.min(discount, subtotal),
+            freeShipping: false,
+            discountedLines: Array.from(discountedLinesMap.values()),
+        };
     }
 
     throw new Error('Unsupported coupon type');
