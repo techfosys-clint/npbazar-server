@@ -4,8 +4,18 @@ const { evaluateCoupon } = require('../utils/discount');
 const { getEffectivePrice } = require('./../utils/pricing');
 
 // GET /api/coupons  (admin)
+// Populates the product/collection targeting fields with { _id, name } — the
+// admin edit form needs the name to show them as already-selected chips.
+// Without this they came back as bare ObjectId strings, the form's toOptions()
+// silently dropped every one of them, and saving the form again then wiped
+// out the (invisible, but still selected) targeting on the coupon in the DB.
 exports.list = async (req, res) => {
-    const coupons = await Coupon.find().sort({ createdAt: -1 });
+    const coupons = await Coupon.find()
+        .populate('productIds', 'name')
+        .populate('collectionIds', 'name')
+        .populate('getProductIds', 'name')
+        .populate('getCollectionIds', 'name')
+        .sort({ createdAt: -1 });
     res.json({ success: true, coupons });
 };
 
