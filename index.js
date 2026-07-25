@@ -1,9 +1,12 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const http = require('http');
+const { Server } = require('socket.io');
 require('dotenv').config();
 
 const connectDB = require('./config/db');
+const { verifyToken } = require('./utils/token');
 
 // Auth
 const adminRoutes = require('./routes/adminRoutes');
@@ -54,6 +57,32 @@ const PORT = process.env.PORT || 5000;
 // plain HTTP — without this, req.protocol always reports 'http', so URLs built
 // from it (e.g. uploaded file URLs) end up http:// even though the site is https.
 app.set('trust proxy', 1);
+
+// Socket.IO shares the same HTTP server as Express so it works behind the
+// same Coolify/Traefik reverse-proxy setup without a separate port/domain.
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: '*' } });
+
+// Only a logged-in admin/staff (valid admin JWT) can join the room that
+// receives real-time order notifications — the storefront never connects here.
+io.use((socket, next) => {
+    try {
+        const token = socket.handshake.auth?.token;
+        const decoded = token && verifyToken(token);
+        if (!decoded || decoded.type !== 'admin') return next(new Error('Unauthorized'));
+        next();
+    } catch (err) {
+        next(new Error('Unauthorized'));
+    }
+});
+
+io.on('connection', (socket) => {
+    socket.join('admins');
+});
+
+// Route handlers reach the socket server via req.app.locals.io (see
+// controllers/orderController.js — emits 'order:new' on checkout).
+app.locals.io = io;
 
 // Connect to MongoDB
 connectDB();
@@ -120,6 +149,6 @@ app.use((req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });

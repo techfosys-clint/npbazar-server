@@ -15,6 +15,25 @@ const { restoreStockAndCoupon } = require('../services/paymentStatusService');
 const genOrderNumber = () =>
     'ORD-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase();
 
+// Real-time "new order" push to the admin panel (Socket.IO room joined only by
+// logged-in admins — see index.js). Best-effort: a missing/broken socket
+// server should never break checkout.
+const notifyAdminsOfNewOrder = (req, order) => {
+    try {
+        req.app.locals.io?.to('admins').emit('order:new', {
+            _id: order._id,
+            orderNumber: order.orderNumber,
+            total: order.total,
+            customerName: order.shippingAddress?.fullName || '',
+            itemCount: order.items.length,
+            paymentMethod: order.paymentMethod,
+            createdAt: order.createdAt,
+        });
+    } catch (err) {
+        console.error('Failed to emit order:new:', err.message);
+    }
+};
+
 // Best-effort order confirmation email — never let a mail failure break checkout.
 const sendOrderConfirmationEmail = async (order, to) => {
     if (!to) return;
@@ -140,6 +159,7 @@ exports.create = async (req, res) => {
         }
 
         sendOrderConfirmationEmail(order, order.customerEmail);
+        notifyAdminsOfNewOrder(req, order);
 
         res.status(201).json({ success: true, message: 'Order placed', order, paymentRedirectUrl });
     } catch (err) {
@@ -248,6 +268,7 @@ exports.guestCreate = async (req, res) => {
         }
 
         sendOrderConfirmationEmail(order, order.customerEmail);
+        notifyAdminsOfNewOrder(req, order);
 
         res.status(201).json({ success: true, message: 'Order placed', order, paymentRedirectUrl });
     } catch (err) {
