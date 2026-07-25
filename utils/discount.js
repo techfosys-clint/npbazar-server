@@ -105,6 +105,17 @@ const evaluateCoupon = async (coupon, items, subtotal) => {
             throw new Error(`Add ${needed} qualifying item(s) to your cart to unlock this offer`);
         }
 
+        // The reward product has a separate pool and isn't already in the cart
+        // (e.g. "buy 2 of A, get B free" and the customer never added B) — there's
+        // nothing to discount in-place, so the caller adds it as a free order line instead.
+        if (hasGetTargets && getPool.length === 0 && coupon.getDiscountType === 'free' && (coupon.getProductIds || []).length > 0) {
+            return {
+                discount: 0,
+                freeShipping: false,
+                freeGift: { productId: coupon.getProductIds[0], quantity: sets * coupon.getQuantity },
+            };
+        }
+
         // Flatten to individual units, cheapest first, so the discount favors the customer.
         const units = [];
         getPool.forEach((i) => {

@@ -34,6 +34,29 @@ const notifyAdminsOfNewOrder = (req, order) => {
     }
 };
 
+// Appends a coupon's free "get" product as a ৳0 order line when it isn't
+// already among the cart items (see utils/discount.js). Recomputed here from
+// the coupon itself — never trust a client-supplied free item, or anyone
+// could add one via devtools. Silently skipped if the gift is now inactive
+// or out of stock, so a sold-out bonus item never blocks checkout.
+const appendFreeGiftItem = async (items, stockByProduct, freeGift) => {
+    if (!freeGift) return;
+    const giftProduct = await Product.findById(freeGift.productId);
+    if (!giftProduct || !giftProduct.isActive) return;
+    if (giftProduct.stock !== null && giftProduct.stock < freeGift.quantity) return;
+
+    stockByProduct.set(String(giftProduct._id), giftProduct.stock);
+    items.push({
+        product: giftProduct._id,
+        name: giftProduct.name,
+        thumbnail: giftProduct.thumbnail,
+        price: 0,
+        costPrice: giftProduct.costPrice || 0,
+        quantity: freeGift.quantity,
+        variant: {},
+    });
+};
+
 // Best-effort order confirmation email — never let a mail failure break checkout.
 const sendOrderConfirmationEmail = async (order, to) => {
     if (!to) return;
@@ -109,6 +132,7 @@ exports.create = async (req, res) => {
             discount = result.discount;
             freeShipping = result.freeShipping;
             appliedCoupon = coupon;
+            await appendFreeGiftItem(items, stockByProduct, result.freeGift);
         }
 
         // Shipping: area-specific zone if one matches the city, else the store-wide default.
@@ -224,6 +248,7 @@ exports.guestCreate = async (req, res) => {
             discount = result.discount;
             freeShipping = result.freeShipping;
             appliedCoupon = coupon;
+            await appendFreeGiftItem(items, stockByProduct, result.freeGift);
         }
 
         const shippingCost = freeShipping ? 0 : await resolveShippingCost(shippingAddress.city, subtotal);

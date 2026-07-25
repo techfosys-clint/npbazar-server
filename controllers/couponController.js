@@ -82,13 +82,22 @@ exports.validate = async (req, res) => {
         });
         const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
 
-        const { discount, freeShipping } = await evaluateCoupon(coupon, items, subtotal);
+        const { discount, freeShipping, freeGift } = await evaluateCoupon(coupon, items, subtotal);
+
+        let freeGiftInfo = null;
+        if (freeGift) {
+            const giftProduct = await Product.findById(freeGift.productId).select('name thumbnail');
+            if (giftProduct) {
+                freeGiftInfo = { productId: giftProduct._id, name: giftProduct.name, thumbnail: giftProduct.thumbnail, quantity: freeGift.quantity };
+            }
+        }
 
         res.json({
             success: true,
             coupon: { code: coupon.code, discountType: coupon.discountType },
             discount,
             freeShipping,
+            freeGift: freeGiftInfo,
             total: subtotal - discount,
         });
     } catch (err) {
